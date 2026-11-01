@@ -1,0 +1,137 @@
+#
+# Amillumos build environment, sourced by bldenv(1) and nightly(1) (ksh93).
+# Derived from usr/src/tools/env/illumos.sh at illumos-gate 755ccbc (the fork
+# point) with the per-architecture variables of richlowe/arm64-gate env/aarch64.
+#
+# Works for both uses:
+#   native  : bldenv env/m68k 'cd usr/src && make bldtools sgs'   (MACH=i386)
+#   cross   : bldenv -T m68k env/m68k '...'                      (MACH=m68k)
+# "-T" exists only after the arm64-gate commits c14727bb0/38aa9e73c are
+# cherry-picked (docs/host-setup.md, step 5).
+#
+
+# -D DEBUG build, -F skip the non-DEBUG build, -n no bringover, -C cstyle,
+# -A ABI checks, -p packages, -r runpath checks, -t rebuild tools. No -m (mail).
+export NIGHTLY_OPTIONS='-FnCDAprt'
+
+export CODEMGR_WS="$(git rev-parse --show-toplevel)"
+export SRC="$CODEMGR_WS/usr/src"
+
+# bldenv -T exports MACH and NATIVE_MACH before sourcing this file; otherwise
+# this is a native build on the x86 host.
+export MACH="${MACH:-$(uname -p)}"
+export NATIVE_MACH="${NATIVE_MACH:-$(uname -p)}"
+
+export ROOT="$CODEMGR_WS/proto/root_${MACH}"
+export MULTI_PROTO="no"
+
+#
+# Host compilers (tools, and native x86 builds). The 2021 gate was built with
+# GCC 7 as primary and GCC 10 as shadow, so either is fine for the tools. Prefer
+# 7 if the host still has it, else 10. No shadow compilers.
+#
+hostgcc=
+for d in /usr/gcc/7 /opt/gcc-7 /usr/gcc/10 /opt/gcc-10; do
+	if [[ -x $d/bin/gcc ]]; then hostgcc=$d; break; fi
+done
+if [[ -z $hostgcc ]]; then
+	print -u2 "env/m68k: no GCC 7 or GCC 10 found in /usr/gcc or /opt"
+	exit 1
+fi
+hostgccver="gcc$($hostgcc/bin/gcc -dumpversion | cut -d. -f1)"
+export i386_GNUC_ROOT="$hostgcc"
+export i386_PRIMARY_CC="$hostgccver,$hostgcc/bin/gcc,gnu"
+export i386_PRIMARY_CCC="$hostgccver,$hostgcc/bin/g++,gnu"
+
+#
+# Cross toolchain, built by host/Makefile into ../build/cross (prefix) with the
+# m68k headers (later libc) in ../build/sysroot.
+#
+export CROSS="$CODEMGR_WS/../build/cross"
+export SYSROOT="$CODEMGR_WS/../build/sysroot"
+triple=m68k-unknown-solaris2.11
+export m68k_GNUC_ROOT="$CROSS"
+export m68k_PRIMARY_CC="gcc10,$CROSS/bin/$triple-gcc,gnu"
+export m68k_PRIMARY_CCC="gcc10,$CROSS/bin/$triple-g++,gnu"
+export m68k_SYSROOT="$SYSROOT"
+
+# Until Makefile.master grows the $($(MACH)_PRIMARY_CC) indirection (step 5),
+# the plain names must also be right for the architecture being built.
+eval export GNUC_ROOT=\"\$${MACH}_GNUC_ROOT\"
+eval export PRIMARY_CC=\"\$${MACH}_PRIMARY_CC\"
+eval export PRIMARY_CCC=\"\$${MACH}_PRIMARY_CCC\"
+unset SHADOW_CCS SHADOW_CCCS
+
+if [[ $MACH == m68k ]]; then
+	export ADJUNCT_PROTO="$SYSROOT"
+	export ANSI_CPP="$CROSS/bin/$triple-cpp"
+	export GLD="$CROSS/bin/m68k-unknown-elf-ld"
+	export OBJCOPY="$CROSS/bin/m68k-unknown-elf-objcopy"
+	export OBJDUMP="$CROSS/bin/m68k-unknown-elf-objdump"
+fi
+
+#
+# Perl and Python: the 2021 defaults (5.10 / 3.5) no longer exist; follow the host.
+#
+export PERL_VERSION="$(perl -MConfig -e 'print $Config{version}' | cut -d. -f1,2)"
+export PERL_PKGVERS="-$(print "$PERL_VERSION" | tr -d .)"
+export PERL_VARIANT=-thread-multi
+export BUILDPERL32='#'
+
+for m in 13 12 11 10 9; do
+	if [[ -x /usr/bin/python3.$m ]]; then
+		export PYTHON3_VERSION=3.$m
+		export PYTHON3_PKGVERS=-3$m
+		export PYTHON3_SUFFIX=
+		export PYTHON3=/usr/bin/python3.$m
+		break
+	fi
+done
+
+# Only a full native x86 build needs the closed binaries; cross m68k has none.
+export ON_CLOSED_BINS="$CODEMGR_WS/closed"
+
+export PKGVERS_BRANCH="999999.$(date +%Y%m%d)"
+export VERSION="$(git describe --long --all HEAD | cut -d/ -f2-)"
+export BUILDVERSION_EXEC="git describe --all --long --dirty"
+
+export STAFFER="$LOGNAME"
+export MAILTO="${MAILTO:-$STAFFER}"
+export BUILD_PROJECT=''
+export ATLOG="$CODEMGR_WS/log"
+export LOGFILE="$ATLOG/nightly.log"
+export PKGARCHIVE="${CODEMGR_WS}/packages/${MACH}/nightly"
+export PKGFMT_OUTPUT='v1'
+export PARENT_WS=''
+export CLONE_WS='https://github.com/illumos/illumos-gate.git'
+export PARENT_ROOT="$PARENT_WS/proto/root_$MACH"
+export PARENT_TOOLS_ROOT="$PARENT_WS/usr/src/tools/proto/root_$MACH-nd"
+export REF_PROTO_LIST="$PARENT_WS/usr/src/proto_list_${MACH}"
+export BUILD_TOOLS='/opt'
+export SPRO_ROOT='/opt/SUNWspro'
+export SPRO_VROOT="$SPRO_ROOT"
+export ONBLD_BIN='/opt/onbld/bin'
+export MAKEFLAGS='k'
+export SUNW_NO_UPDATE_NOTIFY='1'
+export UT_NO_USAGE_TRACKING='1'
+
+function maxjobs {
+	nameref maxjobs=$1
+	integer ncpu
+	integer -r min_mem_per_job=512 # minimum RAM per job in MiB
+
+	ncpu=$(builtin getconf ; getconf 'NPROCESSORS_ONLN')
+	(( maxjobs = ncpu + 2 ))
+
+	if [[ -x /usr/sbin/prtconf ]]; then
+		integer physmem
+		physmem=$(/usr/sbin/prtconf 2>/dev/null | awk '/^Memory size:/ {print $3}')
+		if (( physmem > 0 && maxjobs > physmem / min_mem_per_job )); then
+			(( maxjobs = physmem / min_mem_per_job ))
+		fi
+	fi
+	(( maxjobs < 2 )) && maxjobs=2
+	return 0
+}
+maxjobs DMAKE_MAX_JOBS
+export DMAKE_MAX_JOBS

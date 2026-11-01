@@ -1,0 +1,30 @@
+# Amillumos development machine: Amiga 4000, 68040, as much RAM as the A4000 map allows.
+# Run from the project root:
+#   copperline --config emu/copperline/a4000.toml --run build/serial_hello.exe --exit-on-return
+rom = "/Users/gabriele.bulfon/Amiga/kick40068.A4000.rom"
+
+[machine]
+profile = "A4000"
+
+[chipset]
+video = "PAL"
+
+[cpu]
+model = "68040"
+jit = true
+
+[memory]
+chip = "2M"
+motherboard = "64M"
+accelerator = "128M"
+z3 = "1G"
+
+[serial]
+mode = "stdout"
+
+[audio]
+floppy_sounds = false
+
+[[filesys]]
+path = "/Users/gabriele.bulfon/Claude/Amillumos/build"
+volume = "Build"

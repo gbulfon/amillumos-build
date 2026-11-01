@@ -1,0 +1,10 @@
+# Mac-side build outputs (hello kernel, loader, run logs)
+build/
+.DS_Store
+
+# Host-side (illumos x86) trees: clones, toolchain builds, stamps
+host/amillumos-gate/
+host/build/
+host/src/
+host/stamps/
+host/archives/
